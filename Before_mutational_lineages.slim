@@ -1,0 +1,245 @@
+initialize() {
+
+	if (exists("slimgui")) {
+	defineConstant("s", 0.01); //how deleterious is the mutation
+	defineConstant("h", 0.0); //dominance
+	defineConstant("u", 1e-6);
+	
+	}
+	initializeMutationRate(u);
+	initializeMutationType("m1", 0.0, "f", 0.0); // sweep mutation
+	m1.convertToSubstitution = F;
+	m1.mutationStackPolicy = "s";
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 0);
+	initializeRecombinationRate(0);
+	defineConstant("N", 10000); //pop size
+	
+}
+
+1 {
+	sim.addSubpop("p1", N);
+}
+
+1 late(){
+	//creates a file that will later store the numbers of deleterious alleles
+	//in the population
+	//the first line of the file is just information on the parameters
+	//in order: pop size, mutation rate, selection coefficient, dominance
+	
+	//this is just so the file name doesn't contain a "-" or "e" or a decimal
+	mut_num = -log(u)/log(10);
+	s_num = -log(s)/log(10);
+	dom_num = 100*h;
+	
+	line = N+","+u+","+s+","+h+",";
+	writeFile("lineage_dist_"+N+"_"+mut_num+"_"+s_num+"_"+dom_num+".csv", line, append=T);
+	
+	//calculates mutation-selection balance
+	//pure recessive case first...
+	if (h == 0.0) {
+		mut_sel = sqrt(u/s);
+		if (mut_sel > 1.0){
+			mut_sel = 1.0;
+		}
+		x = asInteger(round(((mut_sel)^2)*N)); //number of homozygotes with del allele
+		y = asInteger(round(2*(mut_sel)*(1-mut_sel)*N)); //number of hets with del allele
+	}
+	
+	//or any case where h > 0
+	else {
+		mut_sel = u / (h*s);
+		if (mut_sel > 1.0){
+			mut_sel = 1.0;
+		}
+		x = asInteger(round(((mut_sel)^2)*N)); //number of homozygotes with del allele
+		y = asInteger(round((mut_sel)*(1-mut_sel)*N)); //number of hets with del allele
+	}
+	
+	//this section goes through and creates the correct number of heterozygotes and homozygotes
+	//carrying the deleterious alleles, as calculated above
+	if (x>0 | y>0){
+		target = sample(p1.individuals, x+y);
+		if (x>0){
+			for (i in 0:(x-1)){
+				target[i].genome1.addNewMutation(m1,0.0,0);
+				target[i].genome2.addNewMutation(m1,0.0,0);
+			}
+		
+		}
+		
+		
+		if (y>0){
+			for (i in (x):(x+y-1)){
+				target[i].genome1.addNewMutation(m1,0.0, 0);
+			}
+		}
+	
+	
+	}
+	
+}
+
+//for the whole simulation, this should simulate back-mutation if two m1 mutations occur at the same spot
+1:11000000 late(){
+	everyone=p1.individuals;
+	
+	for (i in 0:(N-1)){
+		genome1 = everyone[i].genome1;
+		genome2 = everyone[i].genome2;
+		
+		if (genome1.countOfMutationsOfType(m1)>1){
+			genome1.removeMutations();
+		}
+		
+		if (genome2.countOfMutationsOfType(m1)>1){
+			genome2.removeMutations();
+		}
+	}
+
+
+
+}
+
+//for the recording period, this both simulates back-mutation and records the number of homozygotes & heterozygotes for the deleterious allele
+
+1000000: 11000000 late(){
+	hom = 0;
+	het = 0;
+		
+	lineages = length(sim.mutationsOfType(m1));
+	//catn(sim.mutationsOfType(m1));
+	
+	if (lineages >0){
+		
+		//catn(sim.mutationsOfType(m1)[0]);
+		//catn(length(sim.mutationsOfType(m1)));
+		hom_count = matrix(1:(length(sim.mutationsOfType(m1))), nrow=1);
+		het_count = matrix(1:(length(sim.mutationsOfType(m1))), nrow=1);
+		
+		for (i in 1:(length(sim.mutationsOfType(m1)))){
+			hom_count[0,(i-1)] = 0;
+			het_count[0,(i-1)] = 0;
+		}
+	
+	
+	}
+	
+	everyone=p1.individuals;
+	
+	for (i in 0:(N-1)){
+		genome1 = everyone[i].genome1;
+		genome2 = everyone[i].genome2;
+		
+		//counts the number of heterozygotes and homozygotes in the population every generation
+		if (genome1.countOfMutationsOfType(m1) & genome2.countOfMutationsOfType(m1)){
+			
+			hom = hom+1;
+			
+			for (j in 1:(length(sim.mutationsOfType(m1)))){
+				j = j-1;
+				//catn(genome1.mutationsOfType(m1));
+				//catn(sim.mutationsOfType(m1)[i]);
+				
+				//ignores any genome with more than 1 mutation, as that is a back mutation
+				if((genome1.countOfMutationsOfType(m1)) == 1){
+					//which mutational lineage matches the mutation on genome 1
+					if((genome1.mutationsOfType(m1)) == (sim.mutationsOfType(m1)[j])){
+						hom_count[j]=hom_count[j]+1;
+					
+					}
+				}
+				
+				if((genome2.countOfMutationsOfType(m1)) == 1){
+					//which mutational lineage matches the mutation on genome 2
+					if((genome2.mutationsOfType(m1)) == (sim.mutationsOfType(m1)[j])){
+						hom_count[j]=hom_count[j]+1;
+					
+					}
+				}
+			
+			}
+		
+		
+		}
+		else if (genome1.countOfMutationsOfType(m1) | genome2.countOfMutationsOfType(m1)){
+			het = het+1;
+			
+			if (genome1.countOfMutationsOfType(m1)){
+				for (k in 1:(length(sim.mutationsOfType(m1)))){
+					k = k-1;
+					if((genome1.countOfMutationsOfType(m1)) == 1){
+						if((genome1.mutationsOfType(m1)) == (sim.mutationsOfType(m1)[k])){
+							het_count[k]=het_count[k]+1;
+						
+						}
+					}
+				
+				}
+			}
+			
+			if (genome2.countOfMutationsOfType(m1)){
+				for (m in 1:(length(sim.mutationsOfType(m1)))){
+					m = m-1;
+					if((genome2.countOfMutationsOfType(m1)) == 1){
+						if((genome2.mutationsOfType(m1)) == (sim.mutationsOfType(m1)[m])){
+							het_count[m]=het_count[m]+1;
+						
+						}
+					}
+				}
+			}
+		
+		
+		}
+	
+	}
+	
+	
+	
+	
+	//adds the number of homozygotes & heterozygotes to the results file
+	
+	if (lineages > 0){
+		hom_count_string = "";
+		het_count_string = "";
+		
+		for (i in 0:(length(hom_count) - 1)){
+			hom_count_string = hom_count_string+hom_count[i]+",";
+		}
+		for (i in 0:(length(het_count) - 1)){
+			het_count_string = het_count_string+het_count[i]+",";
+		}
+		
+		line2 = hom+","+het+","+lineages+","+hom_count_string+het_count_string;
+		//catn(line2);
+	}
+	
+	else {
+		line2 = "0,0,0,";
+	}
+	
+	
+	
+	
+	//again, just to avoid complicated numbers in the name of the results file
+	mut_num = -log(u)/log(10);
+	s_num = -log(s)/log(10);
+	dom_num = 100*h;
+	
+	writeFile("lineage_dist_"+N+"_"+mut_num+"_"+s_num+"_"+dom_num+".csv", line2, append=T);
+
+}
+
+11000000 late(){
+	sim.simulationFinished();
+}
+
+fitness(NULL) {
+	if (genome1.countOfMutationsOfType(m1) & genome2.countOfMutationsOfType(m1))
+		return 1.0 - s;
+	else if (genome1.countOfMutationsOfType(m1) | genome2.countOfMutationsOfType(m1))
+		return 1.0 - (h*s);
+	else
+		return 1.0;
+}

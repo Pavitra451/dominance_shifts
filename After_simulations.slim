@@ -1,0 +1,203 @@
+initialize() {
+	
+	if (exists("slimgui")) {
+		defineConstant("s", 0.1); //how beneficial is the mutation
+		defineConstant("h", 1); //dominance of the beneficial mutation
+		defineConstant("file_name", "~/Desktop/dist_10000_5_1_1.csv"); //name of mutation-selection distribution file
+		defineConstant("results_path", "~/Desktop/results.txt");
+	}
+	
+	//this simulation only considers adaptation from the standing variation
+	defineConstant("u", 0);
+	initializeMutationRate(u);
+	initializeMutationType("m1", 0.5, "f", 0.0); // sweep mutation
+	
+	m1.convertToSubstitution = F;
+	m1.mutationStackPolicy = "f";
+	
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 0);
+	initializeRecombinationRate(0);
+	defineConstant("N", 10000);
+	
+	
+	
+	lines = readFile(file_name);
+	
+	
+	// this picks a random generations out of the 10 million generations recorded 
+	//in the mutation-selection-drift distribution file
+	random=rdunif(1, 1, asInteger(10000000));
+	
+	//reading the number of homozygotes and heterozygotes for the focal alleles present in that generation
+	number_line = lines[random];
+	fields = strsplit(number_line, ",");
+	defineConstant("x", asInteger(fields[0])); //homozygotes
+	defineConstant("y", asInteger(fields[1]));	//heterozygotes
+	
+	defineConstant("info_line", lines[0]+N+","+u+","+s+","+h+","+x+","+y+",");
+	
+	//getting information on the population prior to the environmental change
+	first_line = lines[0];
+	fields = strsplit(first_line, ",");
+	defineConstant("N_previous", asInteger(fields[0]));
+	defineConstant("u_previous", asFloat(fields[1]));
+	defineConstant("s_previous", asFloat(fields[2]));
+	defineConstant("h_previous", asFloat(fields[3]));
+	
+	
+	mut_num_old = -log(u_previous)/log(10);
+	s_num_old = -log(s_previous)/log(10);
+	dom_num_old = 100*h_previous;
+	
+	//make -log(s) for values of s less than 1
+	s_num_new = -log(s)/log(10);
+	dom_num_new = 100*h;
+	
+	
+	defineConstant("results_file", results_path+"results_"+N_previous+"_"+mut_num_old+"_"+s_num_old+"_"+dom_num_old+"_"+s_num_new+"_"+dom_num_new+".csv");
+
+
+
+}
+
+
+1 {
+	sim.addSubpop("p1", N);
+	p1.tag = 0;  // indicate that a mutation has not yet been seen
+
+}
+
+1 late (){
+	
+	
+	//adding homozygotes and heterozygotes to the population
+	//based on the information from the drawn generation in the 
+	//distribution file
+	if (x>0 | y>0){
+		target = sample(p1.individuals, x+y);
+		if (x>0){
+			for (i in 0:(x-1)){
+				target[i].genome1.addNewDrawnMutation(m1,0);
+				target[i].genome2.addNewDrawnMutation(m1,0);
+			}
+		}
+		if (y>0){
+			for (i in (x):(x+y-1)){
+				target[i].genome1.addNewDrawnMutation(m1,0);
+			}
+		}
+	}
+	
+	//If there were no copies of the focal allele present at the time of the environmental change
+	//the information is recorded and the simulation ends
+	else {
+		
+		output = info_line+"0,0,,,,,,,";
+		writeFile(results_file, output, append=T);
+		//catn("No standing variation");
+		sim.simulationFinished();
+	
+	}
+
+
+}
+
+1:100000 late() {
+
+	if (p1.tag != sim.countOfMutationsOfType(m1)){
+		
+		p1.tag = sim.countOfMutationsOfType(m1);
+		
+		//if there are no copies of the focal allele in the population,
+		//the sweep failed and the simulation ends
+		if (p1.tag == 0) {
+			
+			output = info_line+"3,0,,,,,,,";
+			writeFile(results_file, output, append=T);
+			//cat("Sweep failed to establish.\n");
+			sim.simulationFinished();
+		}
+	}
+	
+	//checks if the focal allele has fixed
+	if (all(p1.genomes.countOfMutationsOfType(m1) > 0)) {
+		
+		freqs = sim.mutationFrequencies(p1, sim.mutationsOfType(m1));
+		num_allele = length(freqs);
+		
+		if (num_allele != p1.tag){
+			output = info_line+"99999999";
+			writeFile(results_file, output, append=T);
+		}
+		
+		//records information if the sweep was hard (only one copy of the allele is present at fixation)
+		if (num_allele == 1){
+			
+			output = info_line+"1,1,0,0,1,0,1,"+sim.generation+",";
+			writeFile(results_file, output, append=T);
+		
+		}
+		
+		//records information if the sweep was soft (more than one copy of the allele present at fixation)
+		else {
+
+			
+			output = info_line+"2,"+num_allele+",";
+			
+			
+			//calculation of diversity indices for the soft sweep
+			
+			shannon = 0;
+			simpson = 0;
+			freq_max = 0;
+			
+			for (i in 1:num_allele){
+				i=i-1;
+				
+				freq = freqs[i];
+				
+				if (freq>freq_max){
+					freq_max=freq;
+				}
+				log_freq = log(freq);
+				product = freq*log_freq;
+				shannon = shannon+product;
+				
+				simpson = simpson + (freq^2);
+			
+			}
+			
+			shannon = shannon*(-1);
+			shannon_max = log(num_allele);
+			evenness = shannon/shannon_max;
+			
+			gini_simpson = 1-simpson;
+			
+			output = output+shannon+","+evenness+","+simpson+","+gini_simpson+","+freq_max+","+sim.generation+",";
+			
+			
+			writeFile(results_file, output, append=T);
+		
+		}
+		
+		sim.simulationFinished();
+	
+	}
+}
+
+
+
+//fitness function
+fitness(NULL) {
+	if (genome1.countOfMutationsOfType(m1) & genome2.countOfMutationsOfType(m1)){
+		return 1.0 + s;
+	}
+	else if (genome1.countOfMutationsOfType(m1) | genome2.countOfMutationsOfType(m1)){
+		return 1.0 + h*s;
+	}
+	else{
+		return 1.0;
+	}
+}
+

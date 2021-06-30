@@ -1,0 +1,289 @@
+initialize() {
+	
+	if (exists("slimgui")) {
+	defineConstant("s", 0.1); //cost of the wild type allele in the new environment 
+	//s2 in the manuscript
+	
+	defineConstant("h", 1); //dominance of the cost of resistance 
+	defineConstant("file_name", "~/Desktop/dist_10000_5_2_1.csv"); //name of distribution file
+	defineConstant("results_path", "~/Desktop/"); //path to results file
+	defineConstant("r_o", 0.05); //intrinsic population rate of increase
+	defineConstant("counter", 1); //the counter is needed so that each simulation run's 
+	//recording of population size has a unique file name
+	}
+	
+	
+
+	defineConstant("u", 0);
+	initializeMutationRate(u);
+	initializeMutationType("m1", 0.5, "f", 0.0); // sweep mutation
+
+	m1.convertToSubstitution = F;
+	m1.mutationStackPolicy = "f";
+	
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 0);
+	initializeRecombinationRate(0);
+	defineConstant("N", 10000);
+	
+	
+	
+	
+	lines = readFile(file_name);
+	
+	
+	
+	defineConstant("random", rdunif(1, 1, asInteger(10000000)));
+	
+	number_line = lines[random];
+	fields = strsplit(number_line, ",");
+	
+	
+	defineConstant("x", asInteger(fields[0])); //starting number of homozygotes
+	defineConstant("y", asInteger(fields[1]));	//starting number of heterozygotes
+	
+	
+	defineConstant("info_line", lines[0]+N+","+u+","+s+","+h+","+r_o+","+x+","+y+",");
+	
+	first_line = lines[0];
+	fields = strsplit(first_line, ",");
+	defineConstant("N_previous", asInteger(fields[0]));
+	defineConstant("u_previous", asFloat(fields[1]));
+	
+	//NOTE: s must be greater than s_previous for the population to undergo a population decrease and subsequent rescue
+	// s2 > s1 from the Methods section of the manuscript
+	defineConstant("s_previous", asFloat(fields[2])); //s1 in the manuscript
+	defineConstant("h_previous", asFloat(fields[3]));	
+	
+	
+	mut_num_old = -log(u_previous)/log(10);
+	s_num_old = -log(s_previous)/log(10);
+	dom_num_old = 100*h_previous;
+	
+	if (s < 1.0) {
+		s_num_new = -log(s)/log(10);
+	}
+	else {
+		s_num_new = log(s)/log(10);
+	}
+	
+	dom_num_new = 100*h;
+	
+	r_o_num = 1000*r_o;
+	
+	defineConstant("simulation_info", N_previous+"_"+mut_num_old+"_"+s_num_old+"_"+dom_num_old+"_"+s_num_new+"_"+dom_num_new+"_"+r_o_num);
+	
+	//creates a directory to store information on the population size
+	defineConstant("pop_size_path", results_path +"/pop_size_"+simulation_info);
+	createDirectory(pop_size_path);
+	
+	defineConstant("results_file", results_path+"results_rescue_"+simulation_info+".csv");
+	defineConstant("pop_size_file", pop_size_path+"/pop_size_"+simulation_info+"_"+counter+".csv");
+
+
+}
+
+
+1 {
+	sim.addSubpop("p1", N);
+	p1.tag = 0;  // indicate that a mutation has not yet been seen
+	
+}
+
+
+//This adds the drawn mutations to the population. 
+1 late () {
+	
+	if (x>0 | y>0){
+		target = sample(p1.individuals, x+y);
+		if (x>0){
+			for (i in 0:(x-1)){
+				target[i].genome1.addNewDrawnMutation(m1,0);
+				target[i].genome2.addNewDrawnMutation(m1,0);
+			}
+		}
+		if (y>0){
+			for (i in (x):(x+y-1)){
+				target[i].genome1.addNewDrawnMutation(m1,0);
+			}
+		}
+	starting_pop_size = p1.individualCount;
+	writeFile(pop_size_file, starting_pop_size+"", append=T);
+
+	
+	}
+	else {
+		
+		output = info_line+"0,0,,,,,,,,,";
+		writeFile(results_file, output, append=T);
+		sim.simulationFinished();
+	
+	}
+
+
+}
+
+
+//this changes the population sizes based on r0, the average fitness of the population, and the current size
+
+2:100000 early() {
+	
+	everyone=p1.individuals;
+	current_size = p1.individualCount;
+	
+	hom=0;
+	het=0;
+	not=0;
+	
+	for (i in 0:(current_size-1)){
+		genome1 = everyone[i].genome1;
+		genome2 = everyone[i].genome2;
+		
+		//counts the number of heterozygotes and homozygotes in the population every generation
+		if (genome1.countOfMutationsOfType(m1) & genome2.countOfMutationsOfType(m1))
+			hom = hom+1;
+		else if (genome1.countOfMutationsOfType(m1) | genome2.countOfMutationsOfType(m1))
+			het = het+1;
+		else
+			not = not+1;
+	
+	}
+	
+	hom_freq = hom/current_size;
+	het_freq = het/current_size;
+	not_freq = not/current_size;
+		
+	res_freq= sum(sim.mutationFrequencies(p1, sim.mutationsOfType(m1)));
+	
+	avg_fit = (hom_freq)*(1-s_previous) + (het_freq)*(1-(h_previous*s_previous))*(1-((1-h)*s)) + (not_freq)*(1-s);
+
+	lambda = avg_fit * current_size * (1+r_o);
+	next_gen_size = rpois(1, lambda);
+	
+
+	if (next_gen_size < 1){
+		new_pop_size = 1;
+		p1.setSubpopulationSize(new_pop_size);
+	}
+	
+	else if (next_gen_size < N) {
+		new_pop_size = next_gen_size;
+		p1.setSubpopulationSize(new_pop_size);
+	}
+	
+	else {
+		new_pop_size = N;
+		p1.setSubpopulationSize(new_pop_size);
+	}
+	
+	writeFile(pop_size_file, new_pop_size+"", append=T);
+
+
+}
+
+
+
+
+1:100000 late() {
+
+	current_size = p1.individualCount;
+	
+	//requires the simulation to run for a minimum of 10 generations
+	
+	if (current_size >= N & sim.generation > 10){
+		freqs = sim.mutationFrequencies(p1, sim.mutationsOfType(m1));
+		freq_m1 = sum(freqs);
+		num_allele = length(freqs);
+		
+		list = readFile(pop_size_file);
+		list_length = length(list);
+		min_pop_size = N;
+		
+		for (i in 1:list_length){
+			i = i - 1;
+			temp_pop_size = asInteger(list[i]);
+			catn(temp_pop_size);
+			if (min_pop_size > temp_pop_size){
+				min_pop_size = temp_pop_size;
+			}
+		}
+		
+		if (num_allele == 1){
+			//code=1, num allele =1, shannon=0, "+evenness=0,"+simpson=1, gini_simpson=0, freq_max=1,"+sim.generation+"," freq m1 + min_pop_size;
+			output = info_line+"1,1,0,0,1,0,1,"+sim.generation+","+"1,"+min_pop_size+",";
+			writeFile(results_file, output, append=T);
+		
+		}
+		
+		else {
+
+			output = info_line+"2,"+num_allele+",";
+			
+			
+			//calculation of population diversity indices
+						
+			shannon = 0;
+			simpson = 0;
+			freq_max = 0;
+			
+			for (i in 1:num_allele){
+				i=i-1;
+				
+				freq = freqs[i];
+				
+				if (freq>freq_max){
+					freq_max=freq;
+				}
+				
+				log_freq = log(freq);
+				product = freq*log_freq;
+				shannon = shannon+product;
+				
+				simpson = simpson + (freq^2);
+			
+			}
+			
+			shannon = shannon*(-1);
+			shannon_max = log(num_allele);
+			evenness = shannon/shannon_max;
+			
+			gini_simpson = 1-simpson;
+			
+			
+			output = output+shannon+","+evenness+","+simpson+","+gini_simpson+","+freq_max+","+sim.generation+","+freq_m1+","+min_pop_size+",";
+			
+			writeFile(results_file, output, append=T);
+		
+		}
+		
+		sim.simulationFinished();
+	
+	}
+	
+	//population extinction occurs when the population size is 1 or fewer
+	if (current_size <= 1){
+		output = info_line+"3,0,,,,,,,,,";
+		writeFile(results_file, output, append=T);		
+		sim.simulationFinished();
+	
+	
+	}
+
+}
+
+
+
+//fitness function
+
+fitness(NULL) {
+	if (genome1.countOfMutationsOfType(m1) & genome2.countOfMutationsOfType(m1)){
+		return (1.0 - s_previous);
+	}
+	else if (genome1.countOfMutationsOfType(m1) | genome2.countOfMutationsOfType(m1)){
+		return (1.0-(h_previous*s_previous))*(1.0-((1-h)*s));
+	}
+	else{
+		return (1.0 - s);
+	}
+}
+

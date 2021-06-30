@@ -1,0 +1,329 @@
+initialize() {
+
+	if (exists("slimgui")) {
+	defineConstant("s", 0.1); //how beneficial is the mutation
+	defineConstant("h", 1); //dominance of the beneficial mutation
+	defineConstant("file_name", "~/Desktop/dist_10000_5_1_1.csv"); //name of distribution file, example given here
+	defineConstant("results_path", "~/Desktop/");
+	defineConstant("u", 0.0001); //mutation rate after the environmental change
+	}
+	
+	initializeMutationRate(u);
+	initializeMutationType("m1", 0.5, "f", 0.0); // standing mutation
+	initializeMutationType("m2", 0.5, "f", 0.0); // de novo mutation
+	
+	m1.convertToSubstitution = F;
+	m1.mutationStackPolicy = "s";
+	
+	m2.convertToSubstitution = F;
+	m2.mutationStackPolicy = "s";
+	
+	initializeGenomicElementType("g1", c(m1, m2), c(0, 1));
+	initializeGenomicElement(g1, 0, 0);
+	initializeRecombinationRate(0);
+	
+	defineConstant("N", 10000);
+	
+	//These lines define the 'fixation' threshold as 99% of the higher mutation-selection balance
+	//since the beneficial allele, due to back mutation, will not reach 100% frequency
+	if (h > 0) {
+	defineConstant("mut_sel_balance", 0.99*(1-(u/(h * (1 - (1/(1+s)))))));
+	
+	}
+	
+	else {
+		defineConstant("mut_sel_balance", 0.99*(1- sqrt(u/(1 - (1/(1+s))))));
+	}
+	
+	
+	//Picks a random generation from the 10000000 recorded in the distribution file
+	lines = readFile(file_name);
+	
+	random=rdunif(1, 1, asInteger(10000000));
+	
+	number_line = lines[random];
+	fields = strsplit(number_line, ",");
+	
+		
+	defineConstant("x", asInteger(fields[0])); //homozygotes
+	defineConstant("y", asInteger(fields[1]));	//heterozygotes
+	
+	
+	defineConstant("info_line", lines[0]+N+","+u+","+s+","+h+","+x+","+y+",");
+	
+	//gets infomation on the state of the population prior to the environmental change from the distribution file
+	first_line = lines[0];
+	fields = strsplit(first_line, ",");
+	defineConstant("N_previous", asInteger(fields[0]));
+	defineConstant("u_previous", asFloat(fields[1]));
+	defineConstant("s_previous", asFloat(fields[2]));
+	defineConstant("h_previous", asFloat(fields[3]));
+	
+	
+	mut_num_old = -log(u_previous)/log(10);
+	
+	
+	s_num_old = -log(s_previous)/log(10);
+	dom_num_old = 100*h_previous;
+	
+	//make -log(s) for values of s less than 1
+	if (s<1) {
+	s_num_new = -log(s)/log(10);
+	}
+	else {
+	s_num_new = log(s)/log(10);
+	}
+	
+	dom_num_new = 100*h;
+	
+	if(u>0){
+		mut_num_new = -log(u)/log(10);
+	}
+	else{
+		mut_num_new = 0;
+	}
+	
+	
+	defineConstant("results_file", results_path+"results_recurrent_"+N_previous+"_"+mut_num_old+"_"+s_num_old+"_"+dom_num_old+"_"+mut_num_new+"_"+s_num_new+"_"+dom_num_new+".csv");
+
+
+
+}
+
+
+1 {
+	sim.addSubpop("p1", N);
+	p1.tag = 0;  // indicate that a mutation has not yet been seen
+
+}
+
+1 late() {
+	
+	if (x>0 | y>0){
+		
+		target = sample(p1.individuals, x+y);
+		
+		if (x>0){
+			for (i in 0:(x-1)){
+				target[i].genome1.addNewDrawnMutation(m1,0);
+				target[i].genome2.addNewDrawnMutation(m1,0);
+			}
+		}
+		
+		if (y>0){
+			for (i in (x):(x+y-1)){
+				target[i].genome1.addNewDrawnMutation(m1,0);
+			}
+		}
+	
+	}
+	
+	else {
+		
+		output = info_line+"0,0,,,,,,,,,,,";
+		writeFile(results_file, output, append=T);
+		sim.simulationFinished();
+	
+	}
+
+}
+
+
+
+
+
+//This loop removes back mutations
+1:100000 late() {
+	
+	everyone=p1.individuals;
+	//q = 0;
+	
+	for (i in 0:(N-1)){
+		
+		
+		genome1 = everyone[i].genome1;
+		genome2 = everyone[i].genome2;
+		
+		
+		if ((genome1.countOfMutationsOfType(m1) + genome1.countOfMutationsOfType(m2)) >1){
+			genome1.removeMutations();
+		}
+		
+		if ((genome2.countOfMutationsOfType(m1) + genome2.countOfMutationsOfType(m2)) >1){
+			genome2.removeMutations();
+
+		}
+	
+	
+	}
+	
+	
+
+}
+
+
+1:100000 late() {
+	
+	freqs = sim.mutationFrequencies(p1, NULL);
+	
+	prop_all = sum(freqs);
+	
+	
+	if(sim.countOfMutationsOfType(m1) > 0) { //start of check that m1 mutations still exist
+		
+		if (prop_all > mut_sel_balance) { //start of fixation if statement
+			
+			
+			freqs_m1 = sim.mutationFrequencies(p1, sim.mutationsOfType(m1));
+			freqs_m2 = sim.mutationFrequencies(p1, sim.mutationsOfType(m2));
+			
+			num_m1_alleles = length (sim.mutationFrequencies(p1, sim.mutationsOfType(m1)));
+			num_m2_alleles = length (sim.mutationFrequencies(p1, sim.mutationsOfType(m2)));
+			
+			prop_m1_alleles = sum(freqs_m1);
+			prop_m2_alleles = sum(freqs_m2);
+			
+			num_allele = length(freqs);
+			update_num_allele = 0;
+			
+			for (i in 1:num_allele){
+				i=i-1;
+				freq = freqs[i];
+					
+				if (freq>0){	
+					update_num_allele = update_num_allele + 1;
+				}
+			}
+			
+
+			if (update_num_allele == 1){
+				//cat("Hard sweep ended in generation " + sim.generation + "\n");
+				//code=1, num allele =1, 
+				// shannon=0, evenness=0, simpson=1, 	gini_simpson=0, freq_max=1,"+sim.generation+",";
+				
+				//The population diversity parameters for a hard sweep:
+				output=info_line+"1,1,0,0,1,0,1,"+sim.generation+",";
+				output = output +num_m1_alleles+","+num_m2_alleles+","+prop_m1_alleles+","+prop_m2_alleles+",";
+				writeFile(results_file, output, append=T);
+			
+			}
+			
+			
+			
+			else { 
+				
+
+				
+				output = info_line+"2,";
+				
+				
+				//calculation of population diversity parameters
+				
+				shannon = 0;
+				simpson = 0;
+				freq_max = 0;
+				
+				for (i in 1:num_allele){
+					i=i-1;
+					freq = freqs[i];
+					
+					if (freq>0){
+												
+						if (freq>freq_max){
+							freq_max=freq;
+						}
+						
+						log_freq = log(freq);
+						product = freq*log_freq;
+						shannon = shannon+product;
+						
+						simpson = simpson + (freq^2);
+					
+					}
+				}
+				
+				shannon = shannon*(-1);
+				shannon_max = log(num_allele);
+				evenness = shannon/shannon_max;
+				
+				gini_simpson = 1-simpson;
+				
+				//Updates the number of alleles to account for back mutation in this generation
+				update_num_m1_alleles = 0;
+				update_num_m2_alleles = 0;
+				
+				if (num_m1_alleles > 0){
+					for (i in 1:num_m1_alleles){
+						i=i-1;
+						freq_m1_temp = freqs_m1[i];
+					
+						if (freq_m1_temp > 0){
+							update_num_m1_alleles = update_num_m1_alleles + 1;
+						}
+					}
+				}
+					
+
+				if (num_m2_alleles > 0){
+
+					for (i in 1:num_m2_alleles){
+						i=i-1;
+						freq_m2_temp = freqs_m2[i];
+						
+						if (freq_m2_temp > 0){
+							update_num_m2_alleles = update_num_m2_alleles + 1;
+						}
+					}
+				}
+				
+				update_num_allele = update_num_m1_alleles+update_num_m2_alleles;
+
+				
+				output = output+update_num_allele+","+shannon+","+evenness+","+simpson+","+gini_simpson+","+freq_max+","+sim.generation+",";
+				output = output+update_num_m1_alleles+","+update_num_m2_alleles+","+prop_m1_alleles+","+prop_m2_alleles+",";
+				
+
+				
+				writeFile(results_file, output, append=T);
+			
+			} 
+			
+			sim.simulationFinished();
+		
+		} 
+	
+	
+	} 
+	
+	//The simulation still goes through this entire loop if there is no standing varaition. 
+	//This 'else if' is necessary to only count a "0" result instead of also counting a "3" result.  
+	else if ((sim.generation > 1) & (sim.countOfMutationsOfType(m1) == 0)) {
+		output = info_line+"3,0,,,,,,,,,,,";
+		writeFile(results_file, output, append=T);
+		sim.simulationFinished();
+	
+	}
+
+}
+
+//Fitness function
+fitness(NULL) {
+	muts_genome_1 = genome1.countOfMutationsOfType(m1) + genome1.countOfMutationsOfType(m2);
+	muts_genome_2 = genome2.countOfMutationsOfType(m1) + genome2.countOfMutationsOfType(m2);
+	total_muts = muts_genome_1 + muts_genome_2;
+
+	if (total_muts > 1){
+		
+		return 1.0 + s;
+	
+	}
+	else if (total_muts == 1){
+		
+		return 1.0 + h*s;
+	
+	}
+	else{
+		return 1.0;
+	}
+}
+
